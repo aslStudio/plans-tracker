@@ -1,0 +1,1 @@
+export { TasksCompletionChart } from './TasksCompletionChart'

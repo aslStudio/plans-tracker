@@ -1,0 +1,27 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Separator merges a custom style on top of the default one 1`] = `
+<View
+  style={
+    {
+      "paddingLeft": undefined,
+      "paddingRight": 16,
+    }
+  }
+>
+  <View
+    style={
+      [
+        {
+          "backgroundColor": "rgba(216, 230, 225, 1)",
+          "height": 1,
+          "width": "100%",
+        },
+        {
+          "marginLeft": 16,
+        },
+      ]
+    }
+  />
+</View>
+`;

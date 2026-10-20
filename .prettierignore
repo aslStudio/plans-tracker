@@ -1,0 +1,7 @@
+dist
+.expo
+node_modules
+android
+ios
+.rnstorybook/storybook.requires.ts
+package-lock.json

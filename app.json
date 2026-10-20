@@ -1,0 +1,82 @@
+{
+  "expo": {
+    "name": "plans-tracker",
+    "slug": "plans-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/app-icon/default.png",
+    "scheme": "planstracker",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.planstracker",
+      "entitlements": {
+        "com.apple.security.application-groups": [
+          "group.app.planstracker.widget"
+        ]
+      },
+      "icon": {
+        "light": "./assets/app-icon/default.png",
+        "dark": "./assets/app-icon/dark.png",
+        "tinted": "./assets/app-icon/tinted.png"
+      }
+    },
+    "android": {
+      "predictiveBackGestureEnabled": false,
+      "package": "app.planstracker",
+      "icon": "./assets/app-icon/default.png"
+    },
+    "web": {
+      "favicon": "./assets/app-icon/default.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-asset",
+      "expo-sharing",
+      "expo-notifications",
+      "./plugins/with-plans-cloud",
+      "@bacons/apple-targets",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true,
+            "usePrecompiledModules": false
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/app-icon/splash-light.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF",
+          "dark": {
+            "image": "./assets/app-icon/splash-dark.png",
+            "backgroundColor": "#0A1617"
+          }
+        }
+      ],
+      [
+        "expo-localization",
+        {
+          "supportedLocales": {
+            "ios": [
+              "en",
+              "ru"
+            ],
+            "android": [
+              "en",
+              "ru"
+            ]
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

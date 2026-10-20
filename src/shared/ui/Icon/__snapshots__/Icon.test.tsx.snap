@@ -1,0 +1,19 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Icon matches the snapshot 1`] = `
+<View
+  style={
+    [
+      {},
+      undefined,
+    ]
+  }
+>
+  <View
+    color="rgba(8, 127, 120, 1)"
+    height={24}
+    testID="svg-mock"
+    width={24}
+  />
+</View>
+`;

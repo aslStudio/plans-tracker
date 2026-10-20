@@ -1,0 +1,1 @@
+export { AnimatedColorSwatch } from './AnimatedColorSwatch'

@@ -1,0 +1,1 @@
+export { ScreenGradientBackground } from './ScreenGradientBackground'

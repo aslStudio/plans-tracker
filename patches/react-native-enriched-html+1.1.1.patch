@@ -1,0 +1,95 @@
+diff --git a/node_modules/react-native-enriched-html/ios/EnrichedTextInputView.mm b/node_modules/react-native-enriched-html/ios/EnrichedTextInputView.mm
+index a899aa6..860adee 100644
+--- a/node_modules/react-native-enriched-html/ios/EnrichedTextInputView.mm
++++ b/node_modules/react-native-enriched-html/ios/EnrichedTextInputView.mm
+@@ -1950,6 +1950,8 @@ Class<RCTComponentViewProtocol> EnrichedTextInputViewCls(void) {
+ 
+   CheckboxListStyle *cbLStyle =
+       (CheckboxListStyle *)stylesDict[@([CheckboxListStyle getType])];
++  BlockQuoteStyle *bqStyle =
++      (BlockQuoteStyle *)stylesDict[@([BlockQuoteStyle getType])];
+   H1Style *h1Style = stylesDict[@([H1Style getType])];
+   H2Style *h2Style = stylesDict[@([H2Style getType])];
+   H3Style *h3Style = stylesDict[@([H3Style getType])];
+@@ -1967,6 +1969,7 @@ Class<RCTComponentViewProtocol> EnrichedTextInputViewCls(void) {
+                                   replacementText:text
+                                              host:self] ||
+       [cbLStyle handleNewlinesInRange:range replacementText:text] ||
++      [bqStyle handleNewlinesInRange:range replacementText:text] ||
+       [h1Style handleNewlinesInRange:range replacementText:text] ||
+       [h2Style handleNewlinesInRange:range replacementText:text] ||
+       [h3Style handleNewlinesInRange:range replacementText:text] ||
+diff --git a/node_modules/react-native-enriched-html/ios/interfaces/StyleHeaders.h b/node_modules/react-native-enriched-html/ios/interfaces/StyleHeaders.h
+index aca5d4a..a44eb03 100644
+--- a/node_modules/react-native-enriched-html/ios/interfaces/StyleHeaders.h
++++ b/node_modules/react-native-enriched-html/ios/interfaces/StyleHeaders.h
+@@ -99,6 +99,7 @@
+ @end
+ 
+ @interface BlockQuoteStyle : StyleBase
++- (BOOL)handleNewlinesInRange:(NSRange)range replacementText:(NSString *)text;
+ @end
+ 
+ @interface CodeBlockStyle : StyleBase
+diff --git a/node_modules/react-native-enriched-html/ios/styles/BlockQuoteStyle.mm b/node_modules/react-native-enriched-html/ios/styles/BlockQuoteStyle.mm
+index 8146d2e..00b711a 100644
+--- a/node_modules/react-native-enriched-html/ios/styles/BlockQuoteStyle.mm
++++ b/node_modules/react-native-enriched-html/ios/styles/BlockQuoteStyle.mm
+@@ -77,4 +77,31 @@
+   }
+ }
+ 
++// Without this a blockquote has no way to be exited: typing attributes
++// carry the quote styling across every newline forever, so the default
++// UITextView newline handling alone never breaks out of it. Pressing return
++// on an already-empty quote line clears the quote styling for that same
++// line instead of inserting another quoted line — matches the same pattern
++// CheckboxListStyle/HeadingStyleBase use to let return "exit" their block.
++- (BOOL)handleNewlinesInRange:(NSRange)range replacementText:(NSString *)text {
++  if ([self detect:self.host.textView.selectedRange] && text.length > 0 &&
++      [[NSCharacterSet newlineCharacterSet]
++          characterIsMember:[text characterAtIndex:text.length - 1]]) {
++    NSString *string = self.host.textView.textStorage.string;
++    NSRange paragraphRange =
++        [string paragraphRangeForRange:self.host.textView.selectedRange];
++    NSString *paragraphText = [string substringWithRange:paragraphRange];
++    NSString *trimmed = [paragraphText
++        stringByTrimmingCharactersInSet:
++            [NSCharacterSet characterSetWithCharactersInString:@"\u200B\n"]];
++    if (trimmed.length == 0) {
++      // Swallow the return entirely — no newline inserted, just drop the
++      // quote styling for the (still empty) current paragraph.
++      [self remove:paragraphRange withDirtyRange:YES];
++      return YES;
++    }
++  }
++  return NO;
++}
++
+ @end
+diff --git a/node_modules/react-native-enriched-html/ios/styles/CheckboxListStyle.mm b/node_modules/react-native-enriched-html/ios/styles/CheckboxListStyle.mm
+index e050326..8376758 100644
+--- a/node_modules/react-native-enriched-html/ios/styles/CheckboxListStyle.mm
++++ b/node_modules/react-native-enriched-html/ios/styles/CheckboxListStyle.mm
+@@ -163,6 +163,21 @@
+   if ([self detect:self.host.textView.selectedRange] && text.length > 0 &&
+       [[NSCharacterSet newlineCharacterSet]
+           characterIsMember:[text characterAtIndex:text.length - 1]]) {
++    // Pressing return on an already-empty item exits the list instead of
++    // adding yet another empty one — same "same line, drop the format"
++    // pattern BlockQuoteStyle uses, and matches Notion/Docs-style editors.
++    NSString *string = self.host.textView.textStorage.string;
++    NSRange paragraphRange =
++        [string paragraphRangeForRange:self.host.textView.selectedRange];
++    NSString *paragraphText = [string substringWithRange:paragraphRange];
++    NSString *trimmed = [paragraphText
++        stringByTrimmingCharactersInSet:
++            [NSCharacterSet characterSetWithCharactersInString:@"\u200B\n"]];
++    if (trimmed.length == 0) {
++      [self remove:paragraphRange withDirtyRange:YES];
++      return YES;
++    }
++
+     // do the replacement manually
+     [TextInsertionUtils replaceText:text
+                                  at:range

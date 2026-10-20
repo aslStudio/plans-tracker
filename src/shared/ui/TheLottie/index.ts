@@ -1,0 +1,1 @@
+export { TheLottie } from './TheLottie'
