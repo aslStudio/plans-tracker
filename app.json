@@ -10,6 +10,8 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.planstracker",
+      "appleTeamId": "X2HSSNMWCF",
+      "usesAppleSignIn": true,
       "entitlements": {
         "com.apple.security.application-groups": [
           "group.app.planstracker.widget"
@@ -35,6 +37,7 @@
       "expo-asset",
       "expo-sharing",
       "expo-notifications",
+      "expo-apple-authentication",
       "./plugins/with-plans-cloud",
       "@bacons/apple-targets",
       [
@@ -73,7 +76,8 @@
             ]
           }
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

@@ -8,6 +8,9 @@ import {
     syncMemory,
     MemoryUserError,
 } from '@/shared/lib/memory/service'
+jest.mock('@/shared/lib/auth/session', () => ({
+    useAuthState: jest.fn(() => ({ ready: true, session: { user: { id: 'user' } } })),
+}))
 jest.mock('@/shared/lib/memory/service', () => {
     class MockMemoryUserError extends Error {}
     return {
@@ -18,7 +21,7 @@ jest.mock('@/shared/lib/memory/service', () => {
         })),
         cloudStatus: jest.fn(async () => ({
             available: false,
-            message: 'iCloud недоступен',
+            message: 'Сервер недоступен',
         })),
         cleanMemory: jest.fn(),
         syncMemory: jest.fn(),
@@ -71,10 +74,10 @@ it('requires confirmation, disables dismissal while cleaning, then shows the res
     expect(screen.queryByText('Память очищена')).toBeNull()
 })
 
-it('shows a generic message for a raw native sync error, not its own text', async () => {
+it('shows a generic message for a raw server error, not its own text', async () => {
     jest.mocked(cloudStatus).mockResolvedValueOnce({
         available: true,
-        message: 'iCloud доступен',
+        message: 'Сервер доступен',
     })
     jest.mocked(memoryUsage).mockResolvedValueOnce({
         localBytes: 250,
@@ -82,22 +85,20 @@ it('shows a generic message for a raw native sync error, not its own text', asyn
         settings: { interval: 'day', enabled: true },
     })
     jest.mocked(syncMemory).mockRejectedValueOnce(
-        new Error(
-            "The operation couldn't be completed. (CKErrorDomain error 4.)",
-        ),
+        new Error('private HTTP response detail'),
     )
     render(<MemoryScreen onClose={jest.fn()} onBusyChange={jest.fn()} />)
 
     fireEvent.press(await screen.findByText('Синхронизировать сейчас'))
 
     expect(await screen.findByText('Что-то пошло не так')).toBeTruthy()
-    expect(screen.queryByText(/CKErrorDomain/)).toBeNull()
+    expect(screen.queryByText(/private HTTP response detail/)).toBeNull()
 })
 
 it('shows its own message for a known MemoryUserError during sync', async () => {
     jest.mocked(cloudStatus).mockResolvedValueOnce({
         available: true,
-        message: 'iCloud доступен',
+        message: 'Сервер доступен',
     })
     jest.mocked(memoryUsage).mockResolvedValueOnce({
         localBytes: 250,
@@ -105,11 +106,11 @@ it('shows its own message for a known MemoryUserError during sync', async () => 
         settings: { interval: 'day', enabled: true },
     })
     jest.mocked(syncMemory).mockRejectedValueOnce(
-        new MemoryUserError('Аккаунт iCloud изменился.'),
+        new MemoryUserError('Данные другого аккаунта.'),
     )
     render(<MemoryScreen onClose={jest.fn()} onBusyChange={jest.fn()} />)
 
     fireEvent.press(await screen.findByText('Синхронизировать сейчас'))
 
-    expect(await screen.findByText('Аккаунт iCloud изменился.')).toBeTruthy()
+    expect(await screen.findByText('Данные другого аккаунта.')).toBeTruthy()
 })

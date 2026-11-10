@@ -4,8 +4,9 @@ import {
     commitStorage,
     withStorageTransaction,
 } from '@/shared/api/common/storage-transaction'
-import { addDays, todayDateString, toLocalDateString } from '@/shared/lib/date'
+import { todayDateString } from '@/shared/lib/date'
 import { clearAppLogs, logError } from '@/shared/lib/diagnostics/app-logger'
+import { currentUser } from '@/shared/lib/auth/session'
 import {
     emptyHistory,
     getMemoryHistory,
@@ -22,10 +23,20 @@ import {
 } from './archive'
 import { cloud } from './cloud'
 import {
+    assertSyncOwner,
+    baseKey,
+    mergeSnapshots,
+    ownerKey,
+    readRemoteSnapshot,
+    readSavedBase,
+    syncedValueKeys,
+    writeRemoteSnapshot,
+    type Snapshot,
+} from './backend-snapshot'
+import { setSyncOffline } from './sync-status'
+import {
     cleanupPlan,
-    inactiveIds,
     keys,
-    monthBefore,
     utf8Bytes,
     type Collections,
 } from './retention'
@@ -138,21 +149,9 @@ function validatePayload(payload: string): {
     return value
 }
 export async function cloudStatus() {
-    if (!cloud)
-        return {
-            available: false,
-            message: t(
-                'iCloud будет доступен в iOS-сборке с подключённым облаком.',
-            ),
-        }
-    try {
-        await cloud.account()
-        return { available: true, message: t('iCloud доступен') }
-    } catch {
-        // A bare `cloud.account()` only ever fails with a raw native/CloudKit
-        // error (e.g. a CKErrorDomain code) — never anything worth showing as-is.
-        return { available: false, message: t('iCloud сейчас недоступен') }
-    }
+    return currentUser()
+        ? { available: true, message: t('Синхронизация с сервером включена') }
+        : { available: false, message: t('Войдите, чтобы синхронизировать данные') }
 }
 async function readCloud(settings: MemorySettings) {
     if (!cloud)
@@ -181,14 +180,11 @@ async function readCloud(settings: MemorySettings) {
         saved: remote ? validatePayload(remote.payload) : null,
     }
 }
-/** Download only the offloaded records into RAM; never persist a second archive on disk. */
+/** One-time recovery of records offloaded by older iCloud builds. */
 export function hydrateArchive() {
     return withStorageTransaction(async () => {
         const settings = await getMemorySettings()
-        if (
-            !settings.enabled ||
-            !Object.values(getArchiveIndex()).some((ids) => ids.length)
-        )
+        if (!Object.values(getArchiveIndex()).some((ids) => ids.length))
             return
         const { saved } = await readCloud(settings)
         if (!saved)
@@ -205,109 +201,117 @@ export function hydrateArchive() {
                 ]),
             ),
         )
+        const data = archiveCollections(await readCollections())
+        await commitStorage([
+            ...Object.entries(data).map(([key, records]): [string, string] => [
+                key,
+                JSON.stringify(records),
+            ]),
+            [archiveIndexKey, '{}'],
+        ])
+        setArchiveIndex({})
+        setArchive({})
     })
 }
-export function syncMemory(force = false) {
-    return withStorageTransaction(async () => {
-        const settings = await getMemorySettings()
-        if (!settings.enabled) return
-        const today = todayDateString()
-        const dueBefore =
-            settings.interval === 'day'
-                ? addDays(today, -1)
-                : settings.interval === 'week'
-                  ? addDays(today, -7)
-                  : monthBefore(today)
-        if (
-            !force &&
-            settings.lastSync &&
-            toLocalDateString(new Date(settings.lastSync)) > dueBefore &&
-            !settings.pendingDeletion
-        )
-            return
-        const { account, remote, saved } = await readCloud(settings)
-        let data = await readCollections()
-        if (saved && !settings.tag) {
-            if (
-                Object.values(data).some((records) =>
-                    records.some(
-                        (record) =>
-                            !String(record.id).startsWith('status-') &&
-                            !String(record.id).startsWith('priority-'),
-                    ),
-                )
-            ) {
-                throw new MemoryUserError(
-                    t(
-                        'В iCloud уже есть архив. Подключение остановлено, чтобы не заменить данные на устройстве или в облаке.',
-                    ),
-                )
-            }
-            data = saved.data
-        } else if (saved) {
-            for (const [key, ids] of Object.entries(getArchiveIndex())) {
-                const localIds = new Set(
-                    (data[key] ?? []).map((item) => item.id),
-                )
-                data[key] = [
-                    ...(data[key] ?? []),
-                    ...(saved.data[key] ?? []).filter(
-                        (item) =>
-                            ids.includes(item.id) && !localIds.has(item.id),
-                    ),
-                ]
-            }
-        }
-        const history =
-            saved && !settings.tag ? saved.history : getMemoryHistory()
-        const payload = JSON.stringify({ version: 1, data, history })
-        const tag = await cloud!.write(payload, remote?.tag ?? null)
-        const offloaded = inactiveIds(
-            data,
-            settings.interval === 'day'
-                ? addDays(today, -1)
-                : settings.interval === 'week'
-                  ? addDays(today, -7)
-                  : monthBefore(today),
-        )
-        const index = Object.fromEntries(
-            Object.entries(offloaded).map(([key, ids]) => [key, [...ids]]),
-        )
-        const local = Object.fromEntries(
-            Object.entries(data).map(([key, records]) => [
-                key,
-                records.filter((item) => !offloaded[key]?.has(item.id)),
-            ]),
-        )
-        const nextSettings = {
-            ...settings,
-            account,
-            tag,
-            lastSync: new Date().toISOString(),
-            cloudBytes: utf8Bytes(payload),
-            pendingDeletion: false,
-        }
-        // Cloud confirmed the full payload before any local records are evicted.
-        await commitStorage([
-            ...Object.entries(local).map(([key, value]): [string, string] => [
-                key,
-                JSON.stringify(value),
-            ]),
-            [archiveIndexKey, JSON.stringify(index)],
-            [historyKey, JSON.stringify(history)],
-            [memoryKey, JSON.stringify(nextSettings)],
-        ])
-        setMemoryHistory(history)
-        setArchiveIndex(index)
-        setArchive(
-            Object.fromEntries(
-                Object.entries(data).map(([key, records]) => [
-                    key,
-                    records.filter((item) => offloaded[key]?.has(item.id)),
-                ]),
-            ),
-        )
+async function localSnapshot(): Promise<Snapshot> {
+    const pairs = await AsyncStorage.multiGet([...syncedValueKeys])
+    return {
+        version: 2,
+        data: await readCollections(),
+        history: getMemoryHistory(),
+        values: Object.fromEntries(
+            pairs.map(([key, raw]) => [key, raw ? JSON.parse(raw) : null]),
+        ),
+    }
+}
+
+function isEmpty(snapshot: Snapshot) {
+    return Object.values(snapshot.data).every((records) =>
+        records.every((record) =>
+            String(record.id).startsWith('status-') ||
+            String(record.id).startsWith('priority-'),
+        ),
+    )
+}
+
+let activeSync: Promise<void> | null = null
+export function syncMemory(_force = false): Promise<void> {
+    if (!currentUser()) return Promise.resolve()
+    if (activeSync) return activeSync
+    activeSync = performSync().finally(() => {
+        activeSync = null
     })
+    return activeSync
+}
+
+async function performSync() {
+    let userId: string | null
+    try {
+        userId = await assertSyncOwner()
+    } catch (error) {
+        throw new MemoryUserError(error instanceof Error ? error.message : t('Не удалось синхронизировать данные'))
+    }
+    if (!userId) return
+    try {
+        await hydrateArchive()
+        for (let attempt = 0; attempt < 4; attempt++) {
+            const local = await withStorageTransaction(localSnapshot)
+            const base = await readSavedBase()
+            const remote = await readRemoteSnapshot()
+            const matchedBase = base?.userId === userId ? base.payload : null
+            const merged = !matchedBase && remote.payload && isEmpty(local)
+                ? remote.payload
+                : mergeSnapshots(matchedBase, local, remote.payload)
+            const dataChanged = JSON.stringify(merged) !== JSON.stringify(local)
+            let revision = remote.revision
+            if (JSON.stringify(merged) !== JSON.stringify(remote.payload)) {
+                const written = await writeRemoteSnapshot(remote.revision, merged)
+                if (written === null) continue
+                revision = written
+            }
+            const applied = await withStorageTransaction(async () => {
+                if (currentUser()?.id !== userId) return false
+                const latest = await localSnapshot()
+                const unchanged = JSON.stringify(latest) === JSON.stringify(local)
+                const settings = await getMemorySettings()
+                await commitStorage([
+                    [baseKey, JSON.stringify({ userId, revision, payload: merged })],
+                    [ownerKey, userId],
+                    ...(unchanged
+                        ? [
+                              ...Object.entries(merged.data).map(
+                                  ([key, records]): [string, string] => [key, JSON.stringify(records)],
+                              ),
+                              ...Object.entries(merged.values).map(
+                                  ([key, value]): [string, string] => [key, JSON.stringify(value)],
+                              ),
+                              [historyKey, JSON.stringify(merged.history)] as [string, string],
+                          ]
+                        : []),
+                    [memoryKey, JSON.stringify({
+                        ...settings,
+                        enabled: true,
+                        lastSync: new Date().toISOString(),
+                        cloudBytes: utf8Bytes(JSON.stringify(merged)),
+                        pendingDeletion: false,
+                    })],
+                ])
+                if (unchanged) {
+                    setMemoryHistory(merged.history)
+                    if (dataChanged) setArchive({})
+                }
+                return unchanged
+            })
+            if (applied) {
+                setSyncOffline(false)
+                return
+            }
+        }
+        throw new Error('sync changed too frequently')
+    } catch (error) {
+        if (currentUser()?.id === userId) setSyncOffline(true)
+        throw error
+    }
 }
 export async function cleanMemory(
     mode: 'all' | 'old',
@@ -323,7 +327,7 @@ export async function cleanMemory(
             if (!saved)
                 throw new MemoryUserError(
                     t(
-                        'Для очистки архива подключитесь к iCloud. Данные не удалены.',
+                        'Для очистки старого архива подключитесь к iCloud. Данные не удалены.',
                     ),
                 )
             for (const [key, ids] of Object.entries(getArchiveIndex())) {
@@ -357,7 +361,7 @@ export async function cleanMemory(
                 memoryKey,
                 JSON.stringify({
                     ...settings,
-                    pendingDeletion: Boolean(settings.tag),
+                    pendingDeletion: Boolean(currentUser()),
                 }),
             ],
         ])
@@ -369,11 +373,11 @@ export async function cleanMemory(
     if (mode === 'all') await clearAppLogs()
     let cloudPending = false
     try {
-        onProgress(t('Обновляем архив iCloud'))
+        onProgress(t('Синхронизируем с сервером'))
         await syncMemory(true)
     } catch (error) {
         cloudPending = true
-        void logError('memory', 'cloud_cleanup_pending', error)
+        void logError('memory', 'server_cleanup_pending', error)
     }
     cloudPending =
         cloudPending || Boolean((await getMemorySettings()).pendingDeletion)

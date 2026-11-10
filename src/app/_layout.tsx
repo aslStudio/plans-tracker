@@ -7,6 +7,7 @@ import {
     Stack,
     ThemeProvider,
     usePathname,
+    useRouter,
 } from 'expo-router'
 import {
     initializeMemory,
@@ -34,6 +35,9 @@ import { TheText } from '@/shared/ui/TheText'
 import { TheButton } from '@/shared/ui/TheButton'
 import { useEffect, useState } from 'react'
 import { Alert, AppState, View } from 'react-native'
+import * as Network from 'expo-network'
+import { restoreSession, useAuthState } from '@/shared/lib/auth/session'
+import { setSyncOffline, useSyncStatus } from '@/shared/lib/memory/sync-status'
 import { registerDevMenuItems } from 'expo-dev-menu'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
@@ -51,7 +55,7 @@ import {
     logInfo,
 } from '@/shared/lib/diagnostics/app-logger'
 import { useStyles } from './_layout.styles'
-import { resetAppToFirstLaunch } from '@/shared/lib/dev/reset-app-state'
+import { resetAppToFirstLaunch, subscribeAppReset } from '@/shared/lib/dev/reset-app-state'
 
 function ReadyRootLayout() {
     useLanguage()
@@ -62,6 +66,15 @@ function ReadyRootLayout() {
     const [memoryError, setMemoryError] = useState(false)
     const [attempt, setAttempt] = useState(0)
     const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null)
+    const [showSignInAfterOnboarding, setShowSignInAfterOnboarding] =
+        useState(false)
+    useEffect(
+        () => subscribeAppReset(() => {
+            setShowSignInAfterOnboarding(false)
+            setOnboardingDone(false)
+        }),
+        [],
+    )
     useEffect(() => {
         if (!__DEV__) return
         // expo-dev-menu's native module is only present in a custom dev-client
@@ -104,8 +117,22 @@ function ReadyRootLayout() {
         ]).catch(() => {})
     }, [])
     useEffect(() => {
+        void restoreSession()
+    }, [])
+    useEffect(() => {
         void initializeMemory()
-            .then(() => setMemoryReady(true))
+            .then(async () => {
+                try {
+                    await hydrateArchive()
+                } catch (error) {
+                    void logError(
+                        'memory',
+                        'legacy_archive_recovery_failed',
+                        error,
+                    )
+                }
+                setMemoryReady(true)
+            })
             .catch((error) => {
                 setMemoryError(true)
                 void logError('memory', 'initialization_failed', error)
@@ -129,10 +156,18 @@ function ReadyRootLayout() {
                         memoryReady &&
                         onboardingDone !== null ? (
                             onboardingDone ? (
-                                <AppNavigationTheme />
+                                <AppNavigationTheme
+                                    showSignInAfterOnboarding={
+                                        showSignInAfterOnboarding
+                                    }
+                                    onSignInOpened={() =>
+                                        setShowSignInAfterOnboarding(false)
+                                    }
+                                />
                             ) : (
                                 <OnboardingScreen
                                     onFinish={() => {
+                                        setShowSignInAfterOnboarding(true)
                                         setOnboardingDone(true)
                                         void completeOnboarding().catch(
                                             (error: unknown) =>
@@ -182,30 +217,54 @@ function ReadyRootLayout() {
     )
 }
 
-function AppNavigationTheme() {
+function AppNavigationTheme({
+    showSignInAfterOnboarding,
+    onSignInOpened,
+}: {
+    showSignInAfterOnboarding: boolean
+    onSignInOpened: () => void
+}) {
     const language = useLanguage()
+    const auth = useAuthState()
+    const authUserId = auth.session?.user.id
+    const syncStatus = useSyncStatus()
     useEffect(() => {
         updateWidgetLanguage(language)
     }, [language])
     const styles = useStyles()
     const { resolvedScheme } = useThemeMode()
     const pathname = usePathname()
+    const router = useRouter()
+
+    useEffect(() => {
+        if (!showSignInAfterOnboarding || !auth.ready) return
+        if (!auth.session) router.push('/sign-in')
+        onSignInOpened()
+    }, [
+        showSignInAfterOnboarding,
+        auth.ready,
+        auth.session,
+        router,
+        onSignInOpened,
+    ])
 
     useEffect(() => {
         void initializeAppLogger()
         void setUpNotificationChannel()
         let syncing = false
-        const sync = async () => {
-            if (syncing) return
-            syncing = true
+        const syncBackend = async () => {
+            if (!authUserId) return
             try {
-                await hydrateArchive()
                 await syncMemory()
             } catch (error) {
                 void logError('memory', 'automatic_sync_failed', error)
-            } finally {
-                syncing = false
             }
+        }
+        const sync = async () => {
+            if (syncing) return
+            syncing = true
+            await syncBackend()
+            syncing = false
             try {
                 // Before rescheduling/syncing widgets so both reflect
                 // whatever the Habits widget's own tap-to-complete rows
@@ -257,16 +316,27 @@ function AppNavigationTheme() {
         }
         const unsubscribeTasks = tasksRepository.subscribe(refreshTasks)
         void sync()
+        const syncTimer = setInterval(() => void syncBackend(), 30000)
+        const networkSubscription = Network.addNetworkStateListener((state) => {
+            if (
+                state.isConnected === false ||
+                state.isInternetReachable === false
+            )
+                setSyncOffline(Boolean(authUserId))
+            else if (state.isConnected) void syncBackend()
+        })
         const subscription = AppState.addEventListener('change', (state) => {
             if (state === 'active') void sync()
             else flushTasks()
         })
         return () => {
             subscription.remove()
+            networkSubscription.remove()
             unsubscribeTasks()
+            clearInterval(syncTimer)
             clearTimeout(taskTimer)
         }
-    }, [language])
+    }, [language, authUserId])
 
     useEffect(() => {
         if (pathname) void logInfo('navigation', 'route_changed', { pathname })
@@ -311,6 +381,10 @@ function AppNavigationTheme() {
                         options={{ presentation: 'modal' }}
                     />
                     <Stack.Screen
+                        name="sign-in"
+                        options={{ presentation: 'modal' }}
+                    />
+                    <Stack.Screen
                         name="notifications"
                         options={{ presentation: 'modal' }}
                     />
@@ -320,6 +394,30 @@ function AppNavigationTheme() {
                     />
                 </Stack>
                 <AppToastHost />
+                {auth.session && syncStatus.offline && (
+                    <View
+                        pointerEvents="none"
+                        style={{
+                            position: 'absolute',
+                            bottom: 88,
+                            alignSelf: 'center',
+                            maxWidth: '88%',
+                            borderRadius: 16,
+                            backgroundColor: 'rgba(25, 35, 36, 0.82)',
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                        }}
+                    >
+                        <TheText
+                            style={{ color: '#fff', textAlign: 'center' }}
+                            size="footnote"
+                        >
+                            {t(
+                                'Сейчас офлайн · изменения сохранены на устройстве',
+                            )}
+                        </TheText>
+                    </View>
+                )}
             </View>
         </ThemeProvider>
     )

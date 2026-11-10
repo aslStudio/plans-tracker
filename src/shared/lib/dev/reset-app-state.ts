@@ -8,6 +8,19 @@ import { emptyHistory, setMemoryHistory } from '@/shared/lib/memory/history'
 import { setArchive, setArchiveIndex } from '@/shared/lib/memory/archive'
 import { initializeMemory } from '@/shared/lib/memory/service'
 
+const resetListeners = new Set<() => void>()
+
+export function subscribeAppReset(listener: () => void) {
+    resetListeners.add(listener)
+    return () => {
+        resetListeners.delete(listener)
+    }
+}
+
+export function returnToFirstLaunch() {
+    resetListeners.forEach((listener) => listener())
+}
+
 /** Restore local app data and OS-managed scheduled reminders to their fresh-install defaults. */
 export async function resetAppState(): Promise<void> {
     await Notifications.cancelAllScheduledNotificationsAsync()

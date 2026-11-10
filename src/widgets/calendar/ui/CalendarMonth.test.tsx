@@ -2,6 +2,7 @@ import type {
     CalendarEvent,
     CalendarSettings,
 } from '@/shared/api/calendar/model'
+import type { TaskCompletion } from '@/shared/api'
 import { fireEvent, render, screen } from '@/shared/lib/test-utils'
 
 import { CalendarMonth } from './CalendarMonth'
@@ -64,5 +65,27 @@ describe('CalendarMonth', () => {
             expect.any(Number),
             expect.any(Number),
         )
+    })
+
+    it('does not rebuild completion indexes when the parent rerenders the same month', () => {
+        const taskCompletions: TaskCompletion[] = []
+        const map = jest.spyOn(taskCompletions, 'map')
+        const completionState = { taskCompletions }
+        const props = {
+            today: '2026-10-14',
+            events: [event],
+            tasks: [],
+            habits: [],
+            completionState,
+            settings,
+            onSelect: () => {},
+        }
+        const { rerender } = render(
+            <CalendarMonth date={new Date(2026, 9, 1)} {...props} />,
+        )
+
+        rerender(<CalendarMonth date={new Date(2026, 9, 14)} {...props} />)
+
+        expect(map).toHaveBeenCalledTimes(1)
     })
 })

@@ -14,6 +14,7 @@ import type {
     HabitCompletion,
 } from '@/shared/api'
 import { showAppToast } from '@/shared/lib/toast/app-toast'
+import { useArchiveVersion } from '@/shared/lib/memory/archive'
 import { logError } from '@/shared/lib/diagnostics/app-logger'
 import { rescheduleNotifications } from '@/features/manage-notification-settings'
 import { SwipeableRowsCoordinatorProvider } from '@/shared/lib/swipeable-rows-coordinator'
@@ -43,6 +44,7 @@ async function loadHabits(): Promise<{
 
 export default function HabitsRoute() {
     const language = useLanguage()
+    const archiveVersion = useArchiveVersion()
 
     const router = useRouter()
     const [habits, setHabits] = useState<Habit[]>([])
@@ -61,6 +63,7 @@ export default function HabitsRoute() {
         useCallback(() => {
             // Recompute localized values when the app language changes.
             void language
+            void archiveVersion
 
             async function load() {
                 const next = await loadHabits()
@@ -74,7 +77,7 @@ export default function HabitsRoute() {
                 )
             }
             void load()
-        }, [language]),
+        }, [language, archiveVersion]),
     )
 
     async function refresh() {

@@ -52,6 +52,7 @@ import { ScreenGradientBackground } from '@/shared/ui/ScreenGradientBackground'
 import { TheText } from '@/shared/ui/TheText'
 import {
     agendaForDate,
+    createAgendaLookup,
     draftFromUnplanned,
     emptyEvent,
     timeLabel,
@@ -259,10 +260,15 @@ export function PlannerScreen() {
         void language
         return { taskStatuses, taskCompletions, habitCompletions }
     }, [language, taskStatuses, taskCompletions, habitCompletions])
+    const agendaLookup = useMemo(
+        () => createAgendaLookup(tasks, habits, completionState),
+        [tasks, habits, completionState],
+    )
     const today = toLocalDateString(now)
     const monday = addDays(selected, -((date.getDay() + 6) % 7))
     const dayItems = useMemo(() => {
         void language
+        if (view !== 'day') return []
         return agendaForDate(
             events,
             tasks,
@@ -271,10 +277,22 @@ export function PlannerScreen() {
             settings.showTasks,
             settings.showHabits,
             completionState,
+            agendaLookup,
         )
-    }, [language, events, tasks, habits, selected, settings, completionState])
+    }, [
+        language,
+        view,
+        events,
+        tasks,
+        habits,
+        selected,
+        settings,
+        completionState,
+        agendaLookup,
+    ])
     const unplanned = useMemo(() => {
         void language
+        if (view !== 'day') return []
         return unplannedForDate(
             events,
             tasks,
@@ -283,8 +301,19 @@ export function PlannerScreen() {
             settings.showTasks,
             settings.showHabits,
             completionState,
+            agendaLookup,
         )
-    }, [language, events, tasks, habits, selected, settings, completionState])
+    }, [
+        language,
+        view,
+        events,
+        tasks,
+        habits,
+        selected,
+        settings,
+        completionState,
+        agendaLookup,
+    ])
     const text = { color: colors.labels.primary }
     function chooseDate(next: string) {
         if (next === selected) return

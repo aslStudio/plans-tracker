@@ -123,39 +123,90 @@ export type AgendaCompletionState = {
     taskCompletions?: TaskCompletion[]
     habitCompletions?: HabitCompletion[]
 }
+export type AgendaLookup = {
+    tasksById: Map<string, Task>
+    habitsById: Map<string, Habit>
+    completedStatusIds: Set<string>
+    taskCompletionKeys: Set<string>
+    habitCompletionKeys: Set<string>
+}
+
+/** Build once for a visible calendar page instead of scanning completion history for every day. */
+export function createAgendaLookup(
+    tasks: Task[],
+    habits: Habit[],
+    state: AgendaCompletionState,
+): AgendaLookup {
+    return {
+        tasksById: new Map(tasks.map((task) => [task.id, task])),
+        habitsById: new Map(habits.map((habit) => [habit.id, habit])),
+        completedStatusIds: new Set(
+            state.taskStatuses
+                ?.filter((status) => status.isCompleted)
+                .map((status) => status.id),
+        ),
+        taskCompletionKeys: new Set(
+            state.taskCompletions?.map(
+                (item) => `${item.taskId}:${item.occurrenceDate}`,
+            ),
+        ),
+        habitCompletionKeys: new Set(
+            state.habitCompletions?.map(
+                (item) => `${item.habitId}:${item.occurrenceDate}`,
+            ),
+        ),
+    }
+}
+
+/** Exclude records that cannot occur in the visible range before scanning each day. */
+export function agendaCandidatesForRange(
+    events: CalendarEvent[],
+    tasks: Task[],
+    habits: Habit[],
+    from: string,
+    through: string,
+) {
+    return {
+        events: events.filter((event) =>
+            event.repeat
+                ? event.date <= through && (!event.until || event.until >= from)
+                : event.date >= from && event.date <= through,
+        ),
+        tasks: tasks.filter((task) => {
+            if (task.startMinute == null) return false
+            const start =
+                task.startDate ??
+                task.endDate ??
+                toLocalDateString(new Date(task.createdAt))
+            return task.repeat
+                ? start <= through
+                : start <= through && (task.endDate ?? start) >= from
+        }),
+        habits: habits.filter((habit) => {
+            if (habit.startMinute == null) return false
+            const start = toLocalDateString(new Date(habit.createdAt))
+            return habit.repeat
+                ? start <= through
+                : start >= from && start <= through
+        }),
+    }
+}
 function isTaskCompleted(
     task: Task | undefined,
     date: string,
-    state: AgendaCompletionState,
+    lookup: AgendaLookup,
 ) {
     if (!task) return false
-    if (task.repeat)
-        return (
-            state.taskCompletions?.some(
-                (completion) =>
-                    completion.taskId === task.id &&
-                    completion.occurrenceDate === date,
-            ) ?? false
-        )
-    return (
-        state.taskStatuses?.some(
-            (status) => status.id === task.statusId && status.isCompleted,
-        ) ?? false
-    )
+    if (task.repeat) return lookup.taskCompletionKeys.has(`${task.id}:${date}`)
+    return lookup.completedStatusIds.has(task.statusId)
 }
 function isHabitCompleted(
     habit: Habit | undefined,
     date: string,
-    state: AgendaCompletionState,
+    lookup: AgendaLookup,
 ) {
     return (
-        habit != null &&
-        (state.habitCompletions?.some(
-            (completion) =>
-                completion.habitId === habit.id &&
-                completion.occurrenceDate === date,
-        ) ??
-            false)
+        habit != null && lookup.habitCompletionKeys.has(`${habit.id}:${date}`)
     )
 }
 export function agendaForDate(
@@ -166,6 +217,7 @@ export function agendaForDate(
     showTasks = true,
     showHabits = true,
     completionState: AgendaCompletionState = {},
+    lookup = createAgendaLookup(tasks, habits, completionState),
 ): AgendaItem[] {
     const result: AgendaItem[] = events
         .filter(
@@ -177,8 +229,10 @@ export function agendaForDate(
         .map((e) => {
             const linked =
                 e.link?.type === 'task'
-                    ? tasks.find((t) => t.id === e.link?.id)
-                    : habits.find((h) => h.id === e.link?.id)
+                    ? lookup.tasksById.get(e.link.id)
+                    : e.link?.type === 'habit'
+                      ? lookup.habitsById.get(e.link.id)
+                      : undefined
             return {
                 ...e,
                 title: linked?.title ?? e.title,
@@ -188,13 +242,13 @@ export function agendaForDate(
                         ? isTaskCompleted(
                               linked as Task | undefined,
                               date,
-                              completionState,
+                              lookup,
                           )
                         : e.link?.type === 'habit'
                           ? isHabitCompleted(
                                 linked as Habit | undefined,
                                 date,
-                                completionState,
+                                lookup,
                             )
                           : false,
             }
@@ -231,7 +285,7 @@ export function agendaForDate(
                 color: EVENT_COLORS[0],
                 source: 'task',
                 link: { type: 'task', id: task.id },
-                completed: isTaskCompleted(task, date, completionState),
+                completed: isTaskCompleted(task, date, lookup),
             })
         }
     if (showHabits)
@@ -255,7 +309,7 @@ export function agendaForDate(
                 color: EVENT_COLORS[1],
                 source: 'habit',
                 link: { type: 'habit', id: habit.id },
-                completed: isHabitCompleted(habit, date, completionState),
+                completed: isHabitCompleted(habit, date, lookup),
             })
         }
     return result.sort((a, b) => a.startMinute - b.startMinute)
@@ -300,6 +354,7 @@ export function unplannedForDate(
     showTasks = true,
     showHabits = true,
     completionState: AgendaCompletionState = {},
+    lookup = createAgendaLookup(tasks, habits, completionState),
 ): AgendaItem[] {
     const linked = new Set(
         events
@@ -329,7 +384,7 @@ export function unplannedForDate(
                   duration: t.durationMinutes ?? 60,
                   repeat: t.repeat ?? null,
                   link: { type: 'task', id: t.id },
-                  completed: isTaskCompleted(t, date, completionState),
+                  completed: isTaskCompleted(t, date, lookup),
               }))
         : []
     const habitItems: AgendaItem[] = showHabits
@@ -353,7 +408,7 @@ export function unplannedForDate(
                   repeat: h.repeat,
                   color: EVENT_COLORS[1],
                   link: { type: 'habit', id: h.id },
-                  completed: isHabitCompleted(h, date, completionState),
+                  completed: isHabitCompleted(h, date, lookup),
               }))
         : []
     return [...taskItems, ...habitItems]

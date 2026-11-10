@@ -28,6 +28,7 @@ export type SettingsScreenProps = {
         showHabits?: boolean
     }) => void
     onOpenMemory?: () => void
+    onOpenAccount?: () => void
     onOpenNotifications?: () => void
     onDownloadLogs?: () => void
     onClearLogs?: () => void

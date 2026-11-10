@@ -1,5 +1,7 @@
 import {
     agendaForDate,
+    agendaCandidatesForRange,
+    createAgendaLookup,
     unplannedForDate,
     minuteAtDrop,
     draftFromUnplanned,
@@ -163,6 +165,101 @@ describe('calendar planning', () => {
             true,
             true,
         ])
+    })
+    it('reuses one lookup across dates with a long completion history', () => {
+        const recurring = { ...task, repeat: { type: 'daily' } as const }
+        const nextDate = '2026-10-14'
+        const state = {
+            taskCompletions: Array.from({ length: 1000 }, (_, index) => ({
+                id: `completion-${index}`,
+                taskId: index === 999 ? task.id : `other-${index}`,
+                occurrenceDate: nextDate,
+                completedAt: nextDate,
+            })),
+        }
+        const lookup = createAgendaLookup([recurring], [], state)
+
+        expect(
+            agendaForDate(
+                [],
+                [recurring],
+                [],
+                date,
+                true,
+                true,
+                state,
+                lookup,
+            )[0].completed,
+        ).toBe(false)
+        expect(
+            agendaForDate(
+                [],
+                [recurring],
+                [],
+                nextDate,
+                true,
+                true,
+                state,
+                lookup,
+            )[0].completed,
+        ).toBe(true)
+    })
+    it('skips past one-off records while retaining repeats and linked titles', () => {
+        const oldDate = '2026-09-13'
+        const oldTask = {
+            ...task,
+            id: 'old-task',
+            title: 'Связанная задача',
+            startDate: oldDate,
+            endDate: oldDate,
+        }
+        const repeatedTask = {
+            ...oldTask,
+            id: 'repeated-task',
+            repeat: { type: 'daily' } as const,
+        }
+        const candidates = agendaCandidatesForRange(
+            [
+                { ...event, id: 'old-event', date: oldDate },
+                {
+                    ...event,
+                    id: 'repeat-event',
+                    date: oldDate,
+                    repeat: { type: 'daily' },
+                },
+                {
+                    ...event,
+                    id: 'linked-event',
+                    link: { type: 'task', id: oldTask.id },
+                },
+            ],
+            [oldTask, repeatedTask],
+            [],
+            date,
+            date,
+        )
+        const lookup = createAgendaLookup([oldTask, repeatedTask], [], {})
+        const items = agendaForDate(
+            candidates.events,
+            candidates.tasks,
+            candidates.habits,
+            date,
+            true,
+            true,
+            {},
+            lookup,
+        )
+
+        expect(candidates.events.map((item) => item.id)).toEqual([
+            'repeat-event',
+            'linked-event',
+        ])
+        expect(candidates.tasks.map((item) => item.id)).toEqual([
+            'repeated-task',
+        ])
+        expect(items.find((item) => item.id === 'linked-event')?.title).toBe(
+            'Связанная задача',
+        )
     })
     it('assigns separate columns to overlapping events and resets after a group', () => {
         const items: AgendaItem[] = [

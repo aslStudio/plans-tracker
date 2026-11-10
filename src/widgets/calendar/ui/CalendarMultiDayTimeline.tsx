@@ -8,7 +8,9 @@ import type {
     CalendarSettings,
 } from '@/shared/api/calendar/model'
 import {
+    agendaCandidatesForRange,
     agendaForDate,
+    createAgendaLookup,
     layoutEvents,
     timeLabel,
     type AgendaCompletionState,
@@ -71,20 +73,31 @@ export function CalendarMultiDayTimeline({
     const [gridWidth, setGridWidth] = useState(0)
     const columnWidth = gridWidth > 0 ? gridWidth / dates.length : 0
 
+    const datesKey = dates.join('|')
     const itemsByDate = useMemo(() => {
         void language
-        return dates.map((date) =>
+        const rangeDates = datesKey.split('|')
+        const candidates = agendaCandidatesForRange(
+            events,
+            tasks,
+            habits,
+            rangeDates[0],
+            rangeDates[rangeDates.length - 1],
+        )
+        const lookup = createAgendaLookup(tasks, habits, completionState)
+        return rangeDates.map((date) =>
             agendaForDate(
-                events,
-                tasks,
-                habits,
+                candidates.events,
+                candidates.tasks,
+                candidates.habits,
                 date,
                 settings.showTasks,
                 settings.showHabits,
                 completionState,
+                lookup,
             ),
         )
-    }, [language, dates, events, tasks, habits, settings, completionState])
+    }, [language, datesKey, events, tasks, habits, settings, completionState])
 
     return (
         <View style={styles.root}>

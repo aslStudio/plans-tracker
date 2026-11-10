@@ -1,4 +1,5 @@
 import { builtinLabel } from '@/shared/lib/i18n/builtin-label'
+import { useAuthState } from '@/shared/lib/auth/session'
 import { t, useLanguage } from '@/shared/lib/i18n'
 import { TaskStatusSettings } from '@/features/manage-task-statuses/TaskStatusSettings'
 import {
@@ -60,6 +61,7 @@ export function SettingsScreen({
     taskDaysAhead = 1,
     onChangeTaskDaysAhead,
     onOpenMemory,
+    onOpenAccount,
     onOpenNotifications,
     onDownloadLogs,
     onClearLogs,
@@ -87,6 +89,7 @@ export function SettingsScreen({
     onChangeAccent,
 }: SettingsScreenProps) {
     const appLanguage = useLanguage()
+    const auth = useAuthState()
 
     const scrollRef = useRef<ScrollView>(null)
     const contentRef = useRef<View>(null)
@@ -230,7 +233,7 @@ export function SettingsScreen({
                             <Row
                                 label={t('Память')}
                                 description={t(
-                                    'Устройство, iCloud и очистка данных',
+                                    'Устройство, сервер и очистка данных',
                                 )}
                                 onPress={onOpenMemory}
                                 RightElement={
@@ -241,6 +244,17 @@ export function SettingsScreen({
                                     />
                                 }
                             />
+                            {onOpenAccount && (
+                                <>
+                                    <Separator offsetLeft={16} />
+                                    <Row
+                                        label={t('Аккаунт')}
+                                        description={auth.session?.user.display_name ?? auth.session?.user.email ?? t('Без входа · данные только на устройстве')}
+                                        onPress={onOpenAccount}
+                                        RightElement={<Icon name="chevron-right" size={20} color="labels-tertiary" />}
+                                    />
+                                </>
+                            )}
                             {onOpenNotifications && (
                                 <>
                                     <Separator offsetLeft={16} />

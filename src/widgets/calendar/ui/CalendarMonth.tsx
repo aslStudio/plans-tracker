@@ -1,4 +1,5 @@
 import { t, useLanguage } from '@/shared/lib/i18n'
+import { useMemo } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import type { Habit, Task } from '@/shared/api'
 import type {
@@ -7,10 +8,13 @@ import type {
 } from '@/shared/api/calendar/model'
 import { buildMonthGrid, WEEKDAY_LABELS } from '@/shared/lib/calendar-grid'
 import {
+    agendaCandidatesForRange,
     agendaForDate,
+    createAgendaLookup,
     type AgendaCompletionState,
 } from '@/entities/calendar-event'
 import { useTheme } from '@/shared/lib/theme/use-theme'
+import { toLocalDateString } from '@/shared/lib/date'
 import { useStyles } from './CalendarMonth.styles'
 
 export function CalendarMonth({
@@ -37,7 +41,55 @@ export function CalendarMonth({
     const { colors, colorScheme } = useTheme()
     const gridColor = colorScheme === 'dark' ? '#505057' : '#CED2DA'
     const styles = useStyles()
-    const weeks = buildMonthGrid(date)
+    const year = date.getFullYear()
+    const month = date.getMonth()
+    const weeks = useMemo(
+        () => buildMonthGrid(new Date(year, month, 1)),
+        [year, month],
+    )
+    const lookup = useMemo(
+        () => createAgendaLookup(tasks, habits, completionState),
+        [tasks, habits, completionState],
+    )
+    const candidates = useMemo(
+        () =>
+            agendaCandidatesForRange(
+                events,
+                tasks,
+                habits,
+                toLocalDateString(new Date(year, month, 1)),
+                toLocalDateString(new Date(year, month + 1, 0)),
+            ),
+        [events, tasks, habits, year, month],
+    )
+    const itemsByDate = useMemo(() => {
+        // A new day can change the archive cutoff for recurring items.
+        void today
+        return weeks.map((week) =>
+            week.map((cell) =>
+                cell
+                    ? agendaForDate(
+                          candidates.events,
+                          candidates.tasks,
+                          candidates.habits,
+                          cell.date,
+                          settings.showTasks,
+                          settings.showHabits,
+                          completionState,
+                          lookup,
+                      )
+                    : [],
+            ),
+        )
+    }, [
+        weeks,
+        candidates,
+        settings.showTasks,
+        settings.showHabits,
+        completionState,
+        lookup,
+        today,
+    ])
     return (
         <ScrollView
             showsVerticalScrollIndicator={false}
@@ -59,17 +111,7 @@ export function CalendarMonth({
             {weeks.map((week, row) => (
                 <View key={row} style={styles.row}>
                     {week.map((cell, i) => {
-                        const items = cell
-                            ? agendaForDate(
-                                  events,
-                                  tasks,
-                                  habits,
-                                  cell.date,
-                                  settings.showTasks,
-                                  settings.showHabits,
-                                  completionState,
-                              )
-                            : []
+                        const items = itemsByDate[row][i]
                         return (
                             <Pressable
                                 key={cell?.date ?? i}

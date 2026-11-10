@@ -1,6 +1,7 @@
 import { t, getLocale, useLanguage } from '@/shared/lib/i18n'
 import { lottie } from '@/shared/config/lottie'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'expo-router'
 import {
     ActivityIndicator,
     Modal,
@@ -25,9 +26,8 @@ import {
     memoryUsage,
     MemoryUserError,
     syncMemory,
-    updateMemorySettings,
-    type SyncInterval,
 } from '@/shared/lib/memory/service'
+import { useAuthState } from '@/shared/lib/auth/session'
 import { formatBytes } from '@/shared/lib/memory/retention'
 import { AppHeader } from '@/shared/ui/AppHeader'
 import { TheText } from '@/shared/ui/TheText'
@@ -38,24 +38,12 @@ import { Placeholder } from '@/shared/ui/Placeholder'
 import { Section } from '@/shared/ui/Section'
 import { Row } from '@/shared/ui/Row'
 import { Separator } from '@/shared/ui/Separator'
-import { PropertyRow } from '@/shared/ui/PropertyRow'
 import { DeleteConfirmationSheet } from '@/shared/ui/DeleteConfirmationSheet'
 import { ScreenGradientBackground } from '@/shared/ui/ScreenGradientBackground'
 import type { Color } from '@/shared/config/color'
 import { resolveTextColor } from '@/shared/ui/TheText/model'
 import { useStyles } from './styles'
 
-const intervals: Record<SyncInterval, string> = {
-    get day() {
-        return t('Раз в день')
-    },
-    get week() {
-        return t('Раз в неделю')
-    },
-    get month() {
-        return t('Раз в месяц')
-    },
-}
 type Operation = {
     busy: boolean
     title: string
@@ -70,6 +58,8 @@ export function MemoryScreen({
     onBusyChange: (busy: boolean) => void
 }) {
     const language = useLanguage()
+    const router = useRouter()
+    const auth = useAuthState()
 
     const { colors, colorScheme } = useTheme()
     const styles = useStyles()
@@ -77,7 +67,7 @@ export function MemoryScreen({
         useState<Awaited<ReturnType<typeof memoryUsage>>>()
     const [status, setStatus] = useState({
         available: false,
-        message: t('Проверяем доступность iCloud…'),
+        message: t('Проверяем синхронизацию…'),
     })
     const [confirm, setConfirm] = useState<'all' | 'old' | null>(null)
     const [operation, setOperation] = useState<Operation | null>(null)
@@ -106,15 +96,18 @@ export function MemoryScreen({
         return () => {
             active = false
         }
-    }, [])
+    }, [auth.session?.user.id])
     async function synchronize() {
+        if (!auth.session) {
+            router.push('/sign-in')
+            return
+        }
         if (busyRef.current) return
         busyRef.current = true
         setSyncing(true)
         setError(undefined)
         onBusyChange(true)
         try {
-            await updateMemorySettings({ enabled: true })
             await syncMemory(true)
             await refresh()
         } catch (e) {
@@ -160,7 +153,7 @@ export function MemoryScreen({
                         result.cloudPending
                             ? ' ' +
                               t(
-                                  'Очистка iCloud завершится при следующей успешной синхронизации.',
+                                  'Очистка сервера завершится при следующей успешной синхронизации.',
                               ) +
                               ''
                             : '',
@@ -246,7 +239,7 @@ export function MemoryScreen({
                                 </View>
                                 <View style={styles.cloud}>
                                     <TheText color="labels-secondary">
-                                        {t('В iCloud')}
+                                        {t('На сервере')}
                                     </TheText>
                                     <TheText weight="600">
                                         {usage.settings.cloudBytes === undefined
@@ -261,7 +254,7 @@ export function MemoryScreen({
                                     size="footnote"
                                 >
                                     {t(
-                                        'Объём сохранённых данных приложения. Размер самого приложения и системных файлов сюда не входит. Для iCloud — объём последнего подтверждённого архива.',
+                                        'Объём данных приложения на устройстве и последней подтверждённой копии на сервере.',
                                     )}
                                 </TheText>
                             </View>
@@ -305,37 +298,10 @@ export function MemoryScreen({
                                     weight="600"
                                     size="subheadline"
                                 >
-                                    {t('Синхронизация с iCloud')}
+                                    {t('Синхронизация с сервером')}
                                 </TheText>
                             }
                         >
-                            <PropertyRow
-                                label={t('Периодичность')}
-                                valueLabel={intervals[usage.settings.interval]}
-                                items={(
-                                    Object.keys(intervals) as SyncInterval[]
-                                ).map((interval) => ({
-                                    key: interval,
-                                    label: intervals[interval],
-                                    isActive:
-                                        usage.settings.interval === interval,
-                                    onPress: () => {
-                                        void updateMemorySettings({ interval })
-                                            .then((settings) => {
-                                                setUsage((current) =>
-                                                    current
-                                                        ? {
-                                                              ...current,
-                                                              settings,
-                                                          }
-                                                        : current,
-                                                )
-                                            })
-                                            .catch((e) => setError(String(e)))
-                                    },
-                                }))}
-                            />
-                            <Separator offsetLeft={16} />
                             <View style={styles.note}>
                                 <TheText
                                     size="subheadline"
@@ -359,38 +325,20 @@ export function MemoryScreen({
                                     size="footnote"
                                     color="labels-secondary"
                                 >
-                                    {t(
-                                        'После сохранения в iCloud завершённые задачи и прошедшие планы старше',
-                                    )}{' '}
-                                    {usage.settings.interval === 'day'
-                                        ? t('одного дня')
-                                        : usage.settings.interval === 'week'
-                                          ? t('недели')
-                                          : t('месяца')}{' '}
-                                    {t(
-                                        'остаются только в облаке. Для их просмотра нужен интернет. Активные задачи, привычки и их отметки остаются на устройстве.',
-                                    )}
-                                </TheText>
-                                <TheText
-                                    size="footnote"
-                                    color="labels-tertiary"
-                                >
-                                    {t(
-                                        'Проверяем срок при открытии приложения. iOS не гарантирует запуск в точное время.',
-                                    )}
+                                    {t('Все данные остаются на устройстве. После входа изменения отправляются на сервер каждые 30 секунд, при открытии приложения и возвращении сети.')}
                                 </TheText>
                                 <TheButton
                                     size="44"
                                     isWide
                                     isLoading={syncing}
-                                    isDisabled={!status.available || syncing}
+                                    isDisabled={syncing}
                                     onPress={() => {
                                         void synchronize()
                                     }}
                                 >
-                                    {usage.settings.enabled
+                                    {auth.session
                                         ? t('Синхронизировать сейчас')
-                                        : t('Подключить iCloud')}
+                                        : t('Войти и синхронизировать')}
                                 </TheButton>
                             </View>
                         </Section>
@@ -457,10 +405,10 @@ export function MemoryScreen({
                 description={
                     confirm === 'all'
                         ? t(
-                              'Будут удалены задачи, привычки, планы, отметки и логи, включая архив iCloud при следующей синхронизации. Число серии и настройки останутся. Восстановить удалённые данные нельзя.',
+                              'Будут удалены задачи, привычки, планы, отметки и логи. После входа удаление синхронизируется с сервером. Число серии и настройки останутся. Восстановить удалённые данные нельзя.',
                           )
                         : t(
-                              'Будут удалены завершённые задачи, прошедшие планы и отметки выполнения старше месяца, включая архив iCloud. Незавершённые задачи и действующие повторения останутся. Число серии сохранится, но подробности удалённых дней восстановить нельзя.',
+                              'Будут удалены завершённые задачи, прошедшие планы и отметки выполнения старше месяца. После входа удаление синхронизируется с сервером. Незавершённые задачи и действующие повторения останутся.',
                           )
                 }
                 confirmLabel={t('Очистить')}

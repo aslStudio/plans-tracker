@@ -106,6 +106,7 @@ export default function SettingsRoute() {
             themeMode={themeMode}
             onChangeThemeMode={setThemeMode}
             onOpenMemory={() => router.push('/memory')}
+            onOpenAccount={() => router.push('/sign-in')}
             onOpenNotifications={() => router.push('/notifications')}
             onDownloadLogs={() => {
                 void (async () => {
